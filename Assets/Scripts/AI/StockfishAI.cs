@@ -10,15 +10,18 @@ namespace WizardChess.AI
 {
     /// <summary>
     /// Stockfish 엔진과 UCI 프로토콜로 통신하는 AI.
-    /// 현재는 Windows(에디터, Quest Link로 PC 실행)에서만 동작한다.
-    /// Quest 단독 실행(안드로이드)은 나중에 별도 작업이 필요하다.
-    ///
-    /// 준비: stockfish.exe를 Assets/StreamingAssets/Stockfish/stockfish.exe 경로에 넣는다.
+    /// Supported platforms:
+    ///  - Quest standalone (Android): Assets/Plugins/Android/libs/arm64-v8a/libstockfish.so
+    ///    is packaged as a native lib, extracted at install time, and executed from nativeLibraryDir.
+    ///  - Windows editor: Engines/Windows/stockfish.exe (outside Assets so it never ships in the APK).
+    /// Other platforms (e.g. macOS editor) return null, and BoardView falls back to RandomAI.
     /// </summary>
     public class StockfishAI : ChessAIBase
     {
-        [Tooltip("StreamingAssets 폴더 기준 실행 파일 경로")]
-        [SerializeField] string enginePath = "Stockfish/stockfish.exe";
+        [Tooltip("Windows 에디터용 실행 파일 경로 (프로젝트 루트 기준)")]
+#pragma warning disable 0414   // Only read in the Windows editor; unused on other platforms
+        [SerializeField] string windowsEnginePath = "Engines/Windows/stockfish.exe";
+#pragma warning restore 0414
 
         [Tooltip("탐색 깊이. 낮을수록 약하고 빠르다. (난이도 조절 1)")]
         [Range(1, 30)] [SerializeField] int searchDepth = 8;
@@ -26,14 +29,22 @@ namespace WizardChess.AI
         [Tooltip("Stockfish Skill Level. 0이 가장 약하고 20이 최강. (난이도 조절 2)")]
         [Range(0, 20)] [SerializeField] int skillLevel = 5;
 
+        // File name must start with "lib" and end with ".so" so the package manager extracts it.
+        const string AndroidEngineFileName = "libstockfish.so";
+
         Process process;
         readonly object sync = new object();
 
         public override Task<Move?> ChooseMoveAsync(Board board)
         {
-#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN
-            // Unity API는 메인 스레드에서만 읽고, 엔진 통신은 백그라운드 스레드에서 한다 (게임이 멈추지 않도록)
-            string fullPath = Path.Combine(Application.streamingAssetsPath, enginePath);
+            // Read Unity / Java APIs on the main thread; engine I/O runs on a background thread so the game never stalls
+            string fullPath;
+            if (!TryGetEnginePath(out fullPath))
+            {
+                Debug.LogWarning("StockfishAI는 이 플랫폼에서 지원되지 않습니다. 랜덤 AI로 대신 둡니다.");
+                return Task.FromResult<Move?>(null);
+            }
+
             string fen = board.ToFen();
             int depth = searchDepth, skill = skillLevel;
 
@@ -65,16 +76,48 @@ namespace WizardChess.AI
                     return (Move?)null;
                 }
             });
+        }
+
+        string cachedEnginePath;
+
+        /// <summary>Resolves the engine executable path for the current platform. Must be called on the main thread.</summary>
+        bool TryGetEnginePath(out string path)
+        {
+            if (cachedEnginePath == null) cachedEnginePath = ResolveEnginePath();
+            path = cachedEnginePath;
+            return path != null;
+        }
+
+        /// <summary>Returns null when the current platform has no engine binary.</summary>
+        string ResolveEnginePath()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            try
+            {
+                using (var unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer"))
+                using (var activity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity"))
+                using (var appInfo = activity.Call<AndroidJavaObject>("getApplicationInfo"))
+                {
+                    return Path.Combine(appInfo.Get<string>("nativeLibraryDir"), AndroidEngineFileName);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError("Stockfish 경로 조회 실패: " + e.Message);
+                return null;
+            }
+#elif UNITY_EDITOR_WIN
+            return Path.GetFullPath(Path.Combine(Application.dataPath, "..", windowsEnginePath));
 #else
-            Debug.LogWarning("StockfishAI는 아직 Windows에서만 동작합니다. 랜덤 AI로 대신 둡니다.");
-            return Task.FromResult<Move?>(null);
+            return null;
 #endif
         }
 
         void EnsureStarted(string path)
         {
             if (process != null && !process.HasExited) return;
-            if (!File.Exists(path)) throw new FileNotFoundException("Stockfish 실행 파일을 찾을 수 없습니다: " + path);
+            if (!File.Exists(path)) throw new FileNotFoundException("Stockfish 실행 파일을 찾을 수 없습니다: " + path
+                + " (Android: useLegacyPackaging이 꺼져 있으면 네이티브 라이브러리가 추출되지 않음)");
 
             process = new Process
             {

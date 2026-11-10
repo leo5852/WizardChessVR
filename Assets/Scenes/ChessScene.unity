@@ -776,7 +776,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2ce5b2c53dd4a2e4fa963b4c9f2c4ef4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WizardChess.AI.StockfishAI
-  enginePath: Stockfish/stockfish.exe
+  windowsEnginePath: Engines/Windows/stockfish.exe
   searchDepth: 8
   skillLevel: 5
 --- !u!114 &1664131318
