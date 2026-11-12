@@ -30,6 +30,10 @@ namespace WizardChess
                  "CreatePrimitive의 기본 머티리얼은 빌드에서 셰이더가 빠져 마젠타로 깨지거나 안 보일 수 있다")]
         [SerializeField] Material primitiveMaterial;
 
+        [Header("플레이어 이동")]
+        [Tooltip("켜면 XR Origin의 CharacterController가 기물에 막히지 않고 통과한다 (탑승 구현 전 자유 이동용)")]
+        [SerializeField] bool rigPassesThroughPieces = true;
+
         [Header("기물 모델 (비워두면 회색 도형 사용)")]
         [Tooltip("백 기물 프리팹 6종")]
         [SerializeField] PiecePrefabSet whitePiecePrefabs = new PiecePrefabSet();
@@ -71,6 +75,7 @@ namespace WizardChess
         [SerializeField] bool logClicks = true;
 
         Board board;
+        CharacterController rigController;   // XR Origin의 이동 충돌체 (없으면 null)
         readonly Renderer[,] squareRenderers = new Renderer[8, 8];
         readonly GameObject[,] pieceObjects = new GameObject[8, 8];
         readonly List<Move> selectedMoves = new List<Move>();
@@ -89,6 +94,8 @@ namespace WizardChess
 
             if (primitiveMaterial == null) primitiveMaterial = Resources.Load<Material>("WizardChess/BoardPrimitive");
             if (primitiveMaterial == null) Debug.LogWarning("[WizardChess] BoardPrimitive 머티리얼을 찾지 못해 기본 머티리얼을 사용합니다");
+
+            rigController = FindAnyObjectByType<CharacterController>();
 
             BuildSquares();
             SpawnAllPieces();
@@ -138,6 +145,7 @@ namespace WizardChess
             go.name = piece.Color + "_" + piece.Type;
             go.transform.localPosition = SquareCenter(x, y) + offset;
             MakeClickable(go, x, y).PlacementOffset = offset;
+            IgnoreRigCollision(go);
             return go;
         }
 
@@ -295,6 +303,17 @@ namespace WizardChess
             go.GetComponent<Renderer>().material.color =
                 piece.Color == PieceColor.White ? whitePieceColor : blackPieceColor;
             return go;
+        }
+
+        /// <summary>
+        /// 플레이어(CharacterController)와 기물 콜라이더 사이의 충돌만 끈다.
+        /// 레이캐스트는 그대로 맞으므로 포인터로 기물을 고르는 데는 영향이 없다.
+        /// </summary>
+        void IgnoreRigCollision(GameObject go)
+        {
+            if (!rigPassesThroughPieces || rigController == null) return;
+            foreach (var c in go.GetComponentsInChildren<Collider>(true))
+                Physics.IgnoreCollision(rigController, c, true);
         }
 
         /// <summary>빌드에 포함되는 에셋 머티리얼로 바꾼다 (지정된 게 없으면 기본 머티리얼 유지).</summary>
