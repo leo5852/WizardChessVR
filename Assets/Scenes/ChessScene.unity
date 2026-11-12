@@ -758,7 +758,7 @@ Transform:
   m_GameObject: {fileID: 1664131314}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0.8, z: 5}
+  m_LocalPosition: {x: 0, y: 0.01, z: 5}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -796,6 +796,8 @@ MonoBehaviour:
   darkSquareColor: {r: 0.55, g: 0.38, b: 0.24, a: 1}
   selectedColor: {r: 1, g: 0.82, b: 0.2, a: 1}
   moveTargetColor: {r: 0.45, g: 0.85, b: 0.45, a: 1}
+  primitiveMaterial: {fileID: 0}
+  rigPassesThroughPieces: 1
   whitePiecePrefabs:
     pawn: {fileID: 104878, guid: 48d5ea4ff810d0e4ea36af7235dd5fd7, type: 3}
     knight: {fileID: 107724, guid: 7248632fb471af143947a88a47eae959, type: 3}
@@ -824,6 +826,7 @@ MonoBehaviour:
   aiThinkDelay: 0.3
   statusText: {fileID: 914358536}
   mouseInputInEditor: 1
+  logClicks: 1
 --- !u!1 &2092139007
 GameObject:
   m_ObjectHideFlags: 0

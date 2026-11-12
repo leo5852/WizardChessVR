@@ -1,7 +1,8 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.XR.Interaction.Toolkit.Interactables;   // XR Interaction Toolkit 3.x (Unity 6 VR 템플릿 기본)
+using UnityEngine.XR.Interaction.Toolkit.Interactables;
+using UnityEngine.XR.Interaction.Toolkit.Interactors.Casters;   // XR Interaction Toolkit 3.x (Unity 6 VR 템플릿 기본)
 using WizardChess.AI;
 using WizardChess.Core;
 #if UNITY_EDITOR
@@ -96,9 +97,19 @@ namespace WizardChess
             if (primitiveMaterial == null) Debug.LogWarning("[WizardChess] BoardPrimitive 머티리얼을 찾지 못해 기본 머티리얼을 사용합니다");
 
             rigController = FindAnyObjectByType<CharacterController>();
+            if (rigPassesThroughPieces) LetPointersHitTriggers();
 
             BuildSquares();
             SpawnAllPieces();
+
+            if (rigPassesThroughPieces)
+            {
+                int triggers = 0;
+                foreach (var po in pieceObjects)
+                    if (po != null) foreach (var c in po.GetComponentsInChildren<Collider>(true)) if (c.isTrigger) triggers++;
+                Debug.Log("[WizardChess] 기물 통과 모드: 트리거 콜라이더 " + triggers + "개, CharacterController = "
+                    + (rigController != null ? rigController.name : "없음"));
+            }
             RefreshStatus();
 
             if (board.SideToMove != playerColor) StartCoroutine(RunAITurn());
@@ -306,14 +317,28 @@ namespace WizardChess
         }
 
         /// <summary>
-        /// 플레이어(CharacterController)와 기물 콜라이더 사이의 충돌만 끈다.
-        /// 레이캐스트는 그대로 맞으므로 포인터로 기물을 고르는 데는 영향이 없다.
+        /// 기물 콜라이더를 트리거로 바꿔 플레이어가 통과하게 한다.
+        /// CharacterController는 트리거와 충돌하지 않으므로 스틱 이동·실제 걷기 모두 막히지 않는다.
+        /// 포인터는 LetPointersHitTriggers에서 트리거도 맞도록 바꿔 두었다.
         /// </summary>
         void IgnoreRigCollision(GameObject go)
         {
-            if (!rigPassesThroughPieces || rigController == null) return;
+            if (!rigPassesThroughPieces) return;
             foreach (var c in go.GetComponentsInChildren<Collider>(true))
-                Physics.IgnoreCollision(rigController, c, true);
+            {
+                c.isTrigger = true;
+                if (rigController != null) Physics.IgnoreCollision(rigController, c, true);   // 혹시 모를 경우를 위한 이중 처리
+            }
+        }
+
+        /// <summary>
+        /// 스타터 리그의 Near-Far 포인터는 기본값이 트리거 무시라, 트리거가 된 기물에도 맞도록 바꾼다.
+        /// 텔레포트 레이는 건드리지 않아서 기물을 지나 바닥으로 텔레포트할 수 있다.
+        /// </summary>
+        static void LetPointersHitTriggers()
+        {
+            foreach (var caster in FindObjectsByType<CurveInteractionCaster>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                caster.raycastTriggerInteraction = QueryTriggerInteraction.Collide;
         }
 
         /// <summary>빌드에 포함되는 에셋 머티리얼로 바꾼다 (지정된 게 없으면 기본 머티리얼 유지).</summary>
@@ -347,7 +372,7 @@ namespace WizardChess
 
             var ray = cam.ScreenPointToRay(mouse.position.ReadValue());
             RaycastHit hit;
-            if (Physics.Raycast(ray, out hit, 20f))
+            if (Physics.Raycast(ray, out hit, 20f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Collide))
             {
                 var cell = hit.collider.GetComponentInParent<BoardCell>();   // 모델은 콜라이더가 자식에 있을 수 있음
                 if (cell != null && cell.Owner == this) OnCellClicked(cell.X, cell.Y);
