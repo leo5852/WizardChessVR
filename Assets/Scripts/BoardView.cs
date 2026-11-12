@@ -26,6 +26,9 @@ namespace WizardChess
         [SerializeField] Color darkSquareColor = new Color(0.55f, 0.38f, 0.24f);
         [SerializeField] Color selectedColor = new Color(1f, 0.82f, 0.2f);
         [SerializeField] Color moveTargetColor = new Color(0.45f, 0.85f, 0.45f);
+        [Tooltip("칸과 대체 도형 기물에 쓸 머티리얼. 비워두면 Resources/WizardChess/BoardPrimitive를 쓴다.\n" +
+                 "CreatePrimitive의 기본 머티리얼은 빌드에서 셰이더가 빠져 마젠타로 깨지거나 안 보일 수 있다")]
+        [SerializeField] Material primitiveMaterial;
 
         [Header("기물 모델 (비워두면 회색 도형 사용)")]
         [Tooltip("백 기물 프리팹 6종")]
@@ -84,6 +87,9 @@ namespace WizardChess
             board = Board.CreateStandard();
             if (ai == null) ai = gameObject.AddComponent<RandomAI>();
 
+            if (primitiveMaterial == null) primitiveMaterial = Resources.Load<Material>("WizardChess/BoardPrimitive");
+            if (primitiveMaterial == null) Debug.LogWarning("[WizardChess] BoardPrimitive 머티리얼을 찾지 못해 기본 머티리얼을 사용합니다");
+
             BuildSquares();
             SpawnAllPieces();
             RefreshStatus();
@@ -103,7 +109,8 @@ namespace WizardChess
                     sq.transform.localScale = new Vector3(squareSize, 0.02f, squareSize);
 
                     var r = sq.GetComponent<Renderer>();
-                    r.material.color = BaseSquareColor(x, y);
+                    ApplyPrimitiveMaterial(r);
+                    r.material.color = BaseSquareColor(x, y);   // 칸마다 머티리얼 인스턴스를 만들어 색만 바꾼다
                     squareRenderers[x, y] = r;
 
                     MakeClickable(sq, x, y);
@@ -284,9 +291,16 @@ namespace WizardChess
             go.transform.localScale = shape == PrimitiveType.Cube ? new Vector3(w, h, w) : new Vector3(w, h * 0.5f, w);
             offset = Vector3.up * (h * 0.5f);
 
+            ApplyPrimitiveMaterial(go.GetComponent<Renderer>());
             go.GetComponent<Renderer>().material.color =
                 piece.Color == PieceColor.White ? whitePieceColor : blackPieceColor;
             return go;
+        }
+
+        /// <summary>빌드에 포함되는 에셋 머티리얼로 바꾼다 (지정된 게 없으면 기본 머티리얼 유지).</summary>
+        void ApplyPrimitiveMaterial(Renderer r)
+        {
+            if (primitiveMaterial != null) r.sharedMaterial = primitiveMaterial;
         }
 
         /// <summary>칸·기물을 VR 포인터와 마우스로 클릭할 수 있게 만든다.</summary>
