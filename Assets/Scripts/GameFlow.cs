@@ -102,6 +102,7 @@ namespace WizardChess
             StartCoroutine(BeginGame());
         }
 
+        /// <summary>첫 턴을 시작한다.</summary>
         private IEnumerator BeginGame()
         {
             // 모든 화면의 Start가 끝난 뒤 첫 이벤트가 나가도록 한 프레임 기다린다
@@ -207,13 +208,16 @@ namespace WizardChess
             {
                 Debug.LogWarning("AI가 수를 고르지 못해 랜덤 수로 대신 둡니다.");
                 move = RandomAI.PickMove(board);
-                busy = false;
             }
 
             if (move.HasValue)
             {
                 yield return ApplyMove(move.Value, false);
                 if (!CheckGameOver()) BeginTurn();
+            }
+            else
+            {
+                busy = false;
             }
         }
 
@@ -230,13 +234,13 @@ namespace WizardChess
             int capX = move.ToX;
             int capY = move.IsEnPassant ? move.FromY : move.ToY;
             Piece captured = board[capX, capY];
-            var info = new MoveInfo(move,mover, captured, capX, capY, isPlayerMove);   // 5단계에서 연출에 넘긴다
+            var info = new MoveInfo(move,mover, captured, capX, capY, isPlayerMove);   // 연출에 넘길 정보
             
             OnMoveDecided?.Invoke(move);
             if (!captured.IsEmpty) OnCapture?.Invoke(move, captured);
             
-            // TODO(5단계): 등록된 연출을 실행하고 모두 끝날 때까지 기다린다
-            yield return null;
+            // 등록된 연출이 모두 끝날 때까지 보드를 바꾸지 않는다.
+            yield return RunPresenters(info);
             
             // 여기서 보드가 바뀌고 차례도 상대에게 넘어간다.
             board.MakeMove(move);
@@ -265,6 +269,31 @@ namespace WizardChess
             }
 
             return false;
+        }
+
+        // ───────────────────────── 연출 실행 ─────────────────────────
+
+        /// <summary>
+        /// 등록된 연출을 모두 동시에 시작하고, 전부 끝날 때까지 기다린다.
+        /// </summary>
+        /// <remarks>가장 오래 걸리는 연출이 끝날 때 이 코루틴도 끝난다.</remarks>
+        private IEnumerator RunPresenters(MoveInfo info)
+        {
+            // 등록된 연출이 없으면 기다리지 않는다.
+            if (presenters.Count == 0) yield break;
+            // 연출 도중 누가 등록·해제해도 반복이 깨지지 않도록 복사본으로 돈다.
+            IMovePresenter[] snapshot = presenters.ToArray();
+
+            // 1) 전부 먼저 시작해 둔다. 여기서 하나씩 기다리면 연출이 동시가 아니라 차례대로 돈다.
+            List<Coroutine> running = new List<Coroutine>();
+            foreach (IMovePresenter p in snapshot)
+            {
+                Coroutine c = StartCoroutine(p.PresentMove(info));
+                running.Add(c);
+            }
+            
+            // 2) 하나씩 기다린다. 이미 끝난 연출은 기다리지 않고 바로 지나간다.
+            foreach (var c in running) yield return c;
         }
     }
 }
