@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using WizardChess.AI;
@@ -34,6 +35,24 @@ namespace WizardChess
         // 게임이 끝난 뒤에도 결과를 물어볼 수 있도록 저장해 둔다.
         private GameResult result = GameResult.Ongoing;
 
+        // 수를 보드에 반영하기 전에 끝나기를 기다릴 연출 목록 (5단계에서 사용)
+        private readonly List<IMovePresenter> presenters = new List<IMovePresenter>();
+
+        // ───────────────────────── 이벤트 ─────────────────────────
+
+        /// <summary>한 쪽의 차례가 시작됨 (게임 시작 시에도 한 번 발생). 인자는 둘 차례인 진영.</summary>
+        public event Action<PieceColor> OnTurnStart;
+        /// <summary>수가 정해짐 (플레이어 또는 AI). 보드는 아직 수를 두기 전 상태.</summary>
+        public event Action<Move> OnMoveDecided;
+        /// <summary>정해진 수가 기물을 잡음. 인자는 그 수와 잡힌 기물. OnMoveDecided 직후, 연출 전에 발생.</summary>
+        public event Action<Move, Piece> OnCapture;
+        /// <summary>승진이 적용됨. 보드에는 이미 승진한 기물이 있다.</summary>
+        public event Action<Move> OnPromotion;
+        /// <summary>수가 보드에 반영됨. 화면은 여기서 보드를 다시 읽으면 된다.</summary>
+        public event Action OnBoardChanged;
+        /// <summary>게임이 끝남. 인자는 결과.</summary>
+        public event Action<GameResult> OnGameOver;
+
         // ───────────────────────── 읽기 전용 상태 ─────────────────────────
 
         /// <summary>플레이어가 맡은 진영</summary>
@@ -65,26 +84,6 @@ namespace WizardChess
         /// <summary>현재 보드의 복사본. 수정해도 게임에는 영향이 없다.</summary>
         public Board GetBoardSnapshot() => board.Clone();
 
-        // ───────────────────────── 이벤트 ─────────────────────────
-
-        /// <summary>한 쪽의 차례가 시작됨 (게임 시작 시에도 한 번 발생). 인자는 둘 차례인 진영.</summary>
-        public event Action<PieceColor> OnTurnStart;
-        /// <summary>수가 정해짐 (플레이어 또는 AI). 보드는 아직 수를 두기 전 상태.</summary>
-        public event Action<Move> OnMoveDecided;
-        /// <summary>정해진 수가 기물을 잡음. 인자는 그 수와 잡힌 기물. OnMoveDecided 직후, 연출 전에 발생.</summary>
-        public event Action<Move, Piece> OnCapture;
-        /// <summary>승진이 적용됨. 보드에는 이미 승진한 기물이 있다.</summary>
-        public event Action<Move> OnPromotion;
-        /// <summary>수가 보드에 반영됨. 화면은 여기서 보드를 다시 읽으면 된다.</summary>
-        public event Action OnBoardChanged;
-        /// <summary>게임이 끝남. 인자는 결과.</summary>
-        public event Action<GameResult> OnGameOver;
-
-        // ───────────────────────── 연출 등록 ─────────────────────────
-
-        // 수를 보드에 반영하기 전에 끝나기를 기다릴 연출 목록 (5단계에서 사용)
-        private readonly List<IMovePresenter> presenters = new List<IMovePresenter>();
-
         // ───────────────────────── 초기화 ─────────────────────────
 
         private void Awake()
@@ -97,6 +96,20 @@ namespace WizardChess
                 ai = gameObject.AddComponent<RandomAI>();
             }
         }
+
+        private void Start()
+        {
+            StartCoroutine(BeginGame());
+        }
+
+        private IEnumerator BeginGame()
+        {
+            // 모든 화면의 Start가 끝난 뒤 첫 이벤트가 나가도록 한 프레임 기다린다
+            yield return null;
+            BeginTurn();
+        }
+
+        // ───────────────────────── 연출 등록 ─────────────────────────
 
         /// <summary>
         /// 수가 보드에 반영되기 전에 기다릴 연출을 등록한다. 같은 연출은 한 번만 들어간다.
@@ -114,6 +127,144 @@ namespace WizardChess
         public void RemovePresenter(IMovePresenter presenter)
         {
             presenters.Remove(presenter);
+        }
+
+        // ───────────────────────── 플레이어 입력 ─────────────────────────
+
+        /// <summary>
+        /// 플레이어의 수를 제출한다. 출발·도착 칸과 승진 기물만 비교한다.
+        /// </summary>
+        /// <remarks>
+        /// 음성·걷기처럼 직접 만든 Move에는 IsCastle/IsEnPassant 플래그가 없으므로,
+        /// 받은 move가 아니라 합법수 목록에서 찾은 수로 진행한다.
+        /// </remarks>
+        /// <returns>플레이어 차례가 아니거나 합법수가 아니면 false</returns>
+        public bool TrySubmitPlayerMove(Move move)
+        {
+            if (!IsPlayerTurn) return false;
+            foreach (var m in GetLegalMoves())
+            {
+                // 합법수 목록에서 출발 칸, 도착 칸, 프로모션 기물이 같은 수를 찾는다.
+                if (m.FromX == move.FromX && m.FromY == move.FromY
+                                          && m.ToX == move.ToX && m.ToY == move.ToY
+                                          && m.Promotion == move.Promotion)
+                {
+                    StartCoroutine(RunPlayerMove(m));
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // ───────────────────────── 턴 진행 ─────────────────────────
+
+        /// <summary>
+        /// 둘 차례인 쪽의 턴을 시작한다: 플레이어면 입력을 풀고, AI면 AI를 실행한다.
+        /// </summary>
+        /// <remarks>
+        /// busy를 푸는 곳은 여기(플레이어 차례)와 CheckGameOver 두 곳뿐이다.
+        /// 코루틴을 중첩해서 AI를 기다리지 않는 이유: 플레이어 차례가 시작된 직후 새 수가 들어오면
+        /// 바깥 코루틴이 나중에 깨어나 busy를 덮어쓰기 때문이다.
+        /// </remarks>
+        private void BeginTurn()
+        {
+            if (SideToMove == PlayerColor)
+            {
+                busy = false;
+                OnTurnStart?.Invoke(SideToMove);
+            }
+            else
+            {
+                busy = true;
+                OnTurnStart?.Invoke(SideToMove);
+                StartCoroutine(RunAITurn());
+            }
+        }
+
+        /// <summary>플레이어의 수를 진행하고, 게임이 안 끝났으면 다음 턴(AI)을 시작한다.</summary>
+        private IEnumerator RunPlayerMove(Move move)
+        {
+            busy = true;
+            yield return ApplyMove(move, true);
+            if (!CheckGameOver()) BeginTurn();
+        }
+
+        /// <summary>AI가 수를 고르고 진행한 뒤, 게임이 안 끝났으면 다음 턴(플레이어)을 시작한다.</summary>
+        private IEnumerator RunAITurn()
+        {
+            busy = true;
+            // 너무 빨리 두면 플레이어가 상황을 못 보므로 잠깐 기다린다.
+            yield return new WaitForSeconds(aiThinkDelay);
+
+            // AI에는 복사본을 넘긴다. 엔진이 생각하는 동안 원본 보드가 바뀌지 않게 하기 위해서다.
+            var task = ai.ChooseMoveAsync(board.Clone());
+            yield return new WaitUntil(() => task.IsCompleted);
+
+            Move? move = task.IsFaulted ? null : task.Result;
+            if (task.IsFaulted) Debug.LogException(task.Exception);
+            // Stockfish가 실패하거나 없는 환경(Mac 에디터)이면 무작위 수로 대신 둔다.
+            if (move == null)
+            {
+                Debug.LogWarning("AI가 수를 고르지 못해 랜덤 수로 대신 둡니다.");
+                move = RandomAI.PickMove(board);
+                busy = false;
+            }
+
+            if (move.HasValue)
+            {
+                yield return ApplyMove(move.Value, false);
+                if (!CheckGameOver()) BeginTurn();
+            }
+        }
+
+        /// <summary>
+        /// 한 수를 진행한다: 이벤트 → 연출 대기 → 보드 반영 → 이벤트.
+        /// </summary>
+        /// <remarks>승패 판정과 다음 턴 시작은 부르는 쪽(RunPlayerMove, RunAITurn)이 한다.</remarks>
+        /// <param name="move">합법수 목록에서 나온 수</param>
+        /// <param name="isPlayerMove">플레이어가 둔 수인지</param>
+        private IEnumerator ApplyMove(Move move, bool isPlayerMove)
+        {
+            // 보드가 바뀌기 전에 연출에 넘길 정보를 모은다. MakeMove 뒤에는 출발 칸과 잡힌 기물을 알 수 없다.
+            Piece mover = board[move.FromX, move.FromY];
+            int capX = move.ToX;
+            int capY = move.IsEnPassant ? move.FromY : move.ToY;
+            Piece captured = board[capX, capY];
+            var info = new MoveInfo(move,mover, captured, capX, capY, isPlayerMove);   // 5단계에서 연출에 넘긴다
+            
+            OnMoveDecided?.Invoke(move);
+            if (!captured.IsEmpty) OnCapture?.Invoke(move, captured);
+            
+            // TODO(5단계): 등록된 연출을 실행하고 모두 끝날 때까지 기다린다
+            yield return null;
+            
+            // 여기서 보드가 바뀌고 차례도 상대에게 넘어간다.
+            board.MakeMove(move);
+            if (info.IsPromotion) OnPromotion?.Invoke(move);
+            
+            // 분리 전과 같은 로그
+            Debug.Log("수: " + move.ToUci() + "   FEN: " + board.ToFen());
+            OnBoardChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// 승패를 판정한다. 끝났으면 상태를 정리하고 OnGameOver를 쏜다.
+        /// </summary>
+        /// <returns>게임이 끝났으면 true</returns>
+        private bool CheckGameOver()
+        {
+            GameResult r = board.GetResult();
+            
+            if (r != GameResult.Ongoing)
+            {
+                gameOver = true;
+                result = r;
+                busy = false;
+                OnGameOver?.Invoke(result);
+                return true;
+            }
+
+            return false;
         }
     }
 }
