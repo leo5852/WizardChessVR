@@ -10,17 +10,21 @@ namespace WizardChess.AI
 {
     /// <summary>
     /// Stockfish 엔진과 UCI 프로토콜로 통신하는 AI.
-    /// Supported platforms:
-    ///  - Quest standalone (Android): Assets/Plugins/Android/libs/arm64-v8a/libstockfish.so
-    ///    is packaged as a native lib, extracted at install time, and executed from nativeLibraryDir.
-    ///  - Windows editor: Engines/Windows/stockfish.exe (outside Assets so it never ships in the APK).
-    /// Other platforms (e.g. macOS editor) return null, and GameFlow falls back to RandomAI.
+    /// 지원 플랫폼:
+    ///  - Quest 단독 실행(Android): Assets/Plugins/Android/libs/arm64-v8a/libstockfish.so를
+    ///    네이티브 라이브러리로 패키징하고, 설치 시 풀린 파일을 nativeLibraryDir에서 실행한다.
+    ///  - Windows 에디터: Engines/Windows/stockfish.exe
+    ///  - macOS 에디터: Engines/macOS/stockfish-macos-universal (Intel·Apple Silicon 공용)
+    ///  에디터용 엔진은 Assets 밖에 두어 APK에 포함되지 않게 한다.
+    /// 그 외 환경은 null을 반환하고, GameFlow가 RandomAI로 대체한다.
     /// </summary>
     public class StockfishAI : ChessAIBase
     {
+#pragma warning disable 0414   // 플랫폼마다 둘 중 하나만 읽으므로 나머지는 미사용 경고가 뜬다
         [Tooltip("Windows 에디터용 실행 파일 경로 (프로젝트 루트 기준)")]
-#pragma warning disable 0414   // Only read in the Windows editor; unused on other platforms
         [SerializeField] string windowsEnginePath = "Engines/Windows/stockfish.exe";
+        [Tooltip("macOS 에디터용 실행 파일 경로 (프로젝트 루트 기준)")]
+        [SerializeField] string macEnginePath = "Engines/macOS/stockfish-macos-universal";
 #pragma warning restore 0414
 
         [Tooltip("탐색 깊이. 낮을수록 약하고 빠르다. (난이도 조절 1)")]
@@ -29,7 +33,7 @@ namespace WizardChess.AI
         [Tooltip("Stockfish Skill Level. 0이 가장 약하고 20이 최강. (난이도 조절 2)")]
         [Range(0, 20)] [SerializeField] int skillLevel = 5;
 
-        // File name must start with "lib" and end with ".so" so the package manager extracts it.
+        // 패키지 매니저가 압축을 풀도록 파일 이름은 "lib"로 시작하고 ".so"로 끝나야 한다.
         const string AndroidEngineFileName = "libstockfish.so";
 
         Process process;
@@ -37,7 +41,7 @@ namespace WizardChess.AI
 
         public override Task<Move?> ChooseMoveAsync(Board board)
         {
-            // Read Unity / Java APIs on the main thread; engine I/O runs on a background thread so the game never stalls
+            // Unity / Java API는 메인 스레드에서 읽고, 엔진 입출력은 백그라운드 스레드에서 돌려 게임이 멈추지 않게 한다
             string fullPath;
             if (!TryGetEnginePath(out fullPath))
             {
@@ -80,7 +84,7 @@ namespace WizardChess.AI
 
         string cachedEnginePath;
 
-        /// <summary>Resolves the engine executable path for the current platform. Must be called on the main thread.</summary>
+        /// <summary>현재 플랫폼에 맞는 엔진 실행 파일 경로를 구한다. 메인 스레드에서 호출해야 한다.</summary>
         bool TryGetEnginePath(out string path)
         {
             if (cachedEnginePath == null) cachedEnginePath = ResolveEnginePath();
@@ -88,7 +92,7 @@ namespace WizardChess.AI
             return path != null;
         }
 
-        /// <summary>Returns null when the current platform has no engine binary.</summary>
+        /// <summary>현재 플랫폼에 엔진 파일이 없으면 null을 반환한다.</summary>
         string ResolveEnginePath()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -108,6 +112,8 @@ namespace WizardChess.AI
             }
 #elif UNITY_EDITOR_WIN
             return Path.GetFullPath(Path.Combine(Application.dataPath, "..", windowsEnginePath));
+#elif UNITY_EDITOR_OSX
+            return Path.GetFullPath(Path.Combine(Application.dataPath, "..", macEnginePath));
 #else
             return null;
 #endif
@@ -117,7 +123,8 @@ namespace WizardChess.AI
         {
             if (process != null && !process.HasExited) return;
             if (!File.Exists(path)) throw new FileNotFoundException("Stockfish 실행 파일을 찾을 수 없습니다: " + path
-                + " (Android: useLegacyPackaging이 꺼져 있으면 네이티브 라이브러리가 추출되지 않음)");
+                + " (Android: useLegacyPackaging이 꺼져 있으면 네이티브 라이브러리가 추출되지 않음."
+                + " 에디터: Git LFS로 받았는지 확인. 파일이 1KB 남짓이면 LFS 포인터만 받은 것)");
 
             process = new Process
             {
