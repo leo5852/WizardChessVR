@@ -355,7 +355,7 @@ namespace WizardChess
 
             // 콜라이더가 이미 있어야 함: XRSimpleInteractable은 추가되는 순간 자식 콜라이더까지 수집한다
             var interactable = go.AddComponent<XRSimpleInteractable>();
-            interactable.selectEntered.AddListener(_ => OnCellClicked(cell.X, cell.Y));
+            cell.BindInteractable(interactable);
             return cell;
         }
 
