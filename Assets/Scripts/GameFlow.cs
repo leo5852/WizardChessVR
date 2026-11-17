@@ -30,7 +30,7 @@ namespace WizardChess
         // 이 게임의 유일한 보드. GameFlow만 MakeMove를 호출한다.
         private Board board;
         // 수를 연출하는 중이거나 AI가 생각 중이면 true. 이때는 플레이어 입력을 받지 않는다.
-        private bool busy;
+        private bool busy = true;
         private bool gameOver;
         // 게임이 끝난 뒤에도 결과를 물어볼 수 있도록 저장해 둔다.
         private GameResult result = GameResult.Ongoing;
