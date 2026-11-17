@@ -854,7 +854,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WizardChess.BoardInputAdapter
   gameFlow: {fileID: 1664131319}
   boardView: {fileID: 1664131318}
-  mouseInputInEditor: 1
+  mouseInputInEditor: 0
   logClicks: 1
 --- !u!1 &2092139007
 GameObject:
