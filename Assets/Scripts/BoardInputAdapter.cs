@@ -17,7 +17,8 @@ namespace WizardChess
     /// 첫 클릭은 내 기물 선택, 두 번째 클릭은 목적지.</para>
     /// <para>- Select / ClearSelection / TryMoveSelectedTo: 선택을 직접 다루는 입력 (예: 패널에서 지정 → 음성으로 확정).</para>
     /// <para>- GameFlow.TrySubmitPlayerMove: 수 전체를 이미 아는 입력 (걷기 이동 등).</para>
-    /// <para>화면 쪽은 OnSelectionChanged / OnSelectionCleared를 구독해 하이라이트를 그린다.</para>
+    /// <para>3D 보드 하이라이트는 여기서 BoardView를 직접 불러 그린다(의존 방향: 입력 → BoardView, GameFlow).
+    /// BoardView가 모르는 다른 화면(나중에 지휘 패널 등)은 OnSelectionChanged / OnSelectionCleared를 구독한다.</para>
     /// </remarks>
     public class BoardInputAdapter : MonoBehaviour
     {
@@ -44,9 +45,9 @@ namespace WizardChess
 
         // ───────────────────────── 이벤트 ─────────────────────────
 
-        /// <summary>기물이 선택됨. 인자: 칸 x, 칸 y, 그 기물의 합법수.</summary>
+        /// <summary>기물이 선택됨. 인자: 칸 x, 칸 y, 그 기물의 합법수. (3D 보드 외 화면용)</summary>
         public event Action<int, int, IReadOnlyList<Move>> OnSelectionChanged;
-        /// <summary>선택이 해제됨. 선택이 있었을 때만 발생한다.</summary>
+        /// <summary>선택이 해제됨. 선택이 있었을 때만 발생한다. (3D 보드 외 화면용)</summary>
         public event Action OnSelectionCleared;
 
         // ───────────────────────── 초기화·구독 ─────────────────────────
@@ -155,6 +156,7 @@ namespace WizardChess
 
             selectedMoves.AddRange(gameFlow.GetLegalMovesFrom(x, y));
 
+            if (boardView != null) boardView.ShowSelection(x, y, selectedMoves);
             OnSelectionChanged?.Invoke(x, y, selectedMoves);
         }
 
@@ -169,6 +171,7 @@ namespace WizardChess
             // 선택이 없었는데 매번 쏘면 화면이 쓸데없이 다시 칠하므로, 있었을 때만 알린다.
             if (wasSelected)
             {
+                if (boardView != null) boardView.ClearHighlights();
                 OnSelectionCleared?.Invoke();
             }
         }

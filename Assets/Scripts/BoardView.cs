@@ -12,7 +12,9 @@ namespace WizardChess
     /// </summary>
     /// <remarks>
     /// <para>게임 상태는 바꾸지 않는다. 보드는 GameFlow에서 읽고, 수는 GameFlow 이벤트와
-    /// IMovePresenter.PresentMove로 받는다. 하이라이트는 BoardInputAdapter의 선택 이벤트로 받는다.</para>
+    /// IMovePresenter.PresentMove로 받는다.</para>
+    /// <para>의존 방향: BoardView는 GameFlow만 안다. 입력(BoardInputAdapter)은 BoardView를 알고,
+    /// 선택 하이라이트는 입력 쪽이 ShowSelection / ClearHighlights를 직접 불러서 그린다.</para>
     /// <para>사용법: GameFlow, BoardInputAdapter와 같은 GameObject에 붙이고 플레이 위치 앞(예: 0, 0.8, 0.6)에 둔다.
     /// 백 진영이 -Z 쪽(플레이어 쪽), 흑 진영이 +Z 쪽에 생성된다.</para>
     /// </remarks>
@@ -20,8 +22,6 @@ namespace WizardChess
     {
         [Header("연결 (비워두면 같은 오브젝트에서 찾음)")]
         [SerializeField] GameFlow gameFlow;
-        [Tooltip("선택 하이라이트를 받을 입력 어댑터 (선택 사항)")]
-        [SerializeField] BoardInputAdapter input;
 
         [Header("보드")]
         [Tooltip("칸 한 변의 길이(m). 0.1이면 보드 전체가 80cm")]
@@ -78,7 +78,6 @@ namespace WizardChess
         {
             // 인스펙터에서 비워 두면 같은 오브젝트의 컴포넌트를 쓴다.
             if (gameFlow == null) gameFlow = GetComponent<GameFlow>();
-            if (input == null) input = GetComponent<BoardInputAdapter>();
             if (gameFlow == null) Debug.LogError("[WizardChess] BoardView: GameFlow를 찾을 수 없습니다.", this);
         }
 
@@ -92,11 +91,6 @@ namespace WizardChess
                 gameFlow.OnBoardChanged += RefreshStatus;
                 gameFlow.OnGameOver += HandleGameOver;
             }
-            if (input != null)
-            {
-                input.OnSelectionChanged += ShowSelection;
-                input.OnSelectionCleared += ClearHighlights;
-            }
         }
 
         void OnDisable()
@@ -108,11 +102,6 @@ namespace WizardChess
                 gameFlow.OnPromotion -= HandlePromotion;
                 gameFlow.OnBoardChanged -= RefreshStatus;
                 gameFlow.OnGameOver -= HandleGameOver;
-            }
-            if (input != null)
-            {
-                input.OnSelectionChanged -= ShowSelection;
-                input.OnSelectionCleared -= ClearHighlights;
             }
         }
 
@@ -387,8 +376,9 @@ namespace WizardChess
 
         // ───────────────────────── 선택 하이라이트 ─────────────────────────
 
-        // 선택한 칸은 노란색, 갈 수 있는 칸은 초록색으로 칠한다.
-        void ShowSelection(int x, int y, IReadOnlyList<Move> moves)
+        /// <summary>선택한 칸은 노란색, 갈 수 있는 칸은 초록색으로 칠한다. 이전 하이라이트는 지운다.</summary>
+        /// <remarks>입력 쪽(BoardInputAdapter)이 기물을 선택할 때 부른다.</remarks>
+        public void ShowSelection(int x, int y, IReadOnlyList<Move> moves)
         {
             ClearHighlights();
             Tint(x, y, selectedColor);
@@ -401,7 +391,8 @@ namespace WizardChess
             highlighted.Add(new Vector2Int(x, y));
         }
 
-        void ClearHighlights()
+        /// <summary>하이라이트한 칸을 원래 색으로 되돌린다.</summary>
+        public void ClearHighlights()
         {
             foreach (var p in highlighted)
                 squareRenderers[p.x, p.y].material.color = BaseSquareColor(p.x, p.y);
