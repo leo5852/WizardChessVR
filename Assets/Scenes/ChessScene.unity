@@ -743,6 +743,7 @@ GameObject:
   - component: {fileID: 1664131317}
   - component: {fileID: 1664131318}
   - component: {fileID: 1664131319}
+  - component: {fileID: 1664131320}
   m_Layer: 0
   m_Name: ChessBoard
   m_TagString: Untagged
@@ -792,6 +793,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 305d2d896498e5648a65e302bcf26344, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WizardChess.BoardView
+  gameFlow: {fileID: 1664131319}
   squareSize: 1
   lightSquareColor: {r: 0.93, g: 0.87, b: 0.73, a: 1}
   darkSquareColor: {r: 0.55, g: 0.38, b: 0.24, a: 1}
@@ -822,12 +824,7 @@ MonoBehaviour:
   whitePieceColor: {r: 0.95, g: 0.93, b: 0.88, a: 1}
   blackPieceColor: {r: 0.15, g: 0.15, b: 0.18, a: 1}
   moveDuration: 0.4
-  playerColor: 0
-  ai: {fileID: 1664131317}
-  aiThinkDelay: 0.3
   statusText: {fileID: 914358536}
-  mouseInputInEditor: 1
-  logClicks: 1
 --- !u!114 &1664131319
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -843,6 +840,22 @@ MonoBehaviour:
   playerColor: 0
   ai: {fileID: 1664131317}
   aiThinkDelay: 0.3
+--- !u!114 &1664131320
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1664131314}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ae9138e5e4ab4eb1a4a766d5d39063a5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WizardChess.BoardInputAdapter
+  gameFlow: {fileID: 1664131319}
+  boardView: {fileID: 1664131318}
+  mouseInputInEditor: 1
+  logClicks: 1
 --- !u!1 &2092139007
 GameObject:
   m_ObjectHideFlags: 0
