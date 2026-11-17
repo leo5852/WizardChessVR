@@ -1,24 +1,28 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.XR.Interaction.Toolkit.Interactables;   // XR Interaction Toolkit 3.x (Unity 6 VR 템플릿 기본)
-using WizardChess.AI;
+using UnityEngine.XR.Interaction.Toolkit.Interactables;
+using UnityEngine.XR.Interaction.Toolkit.Interactors.Casters;   // XR Interaction Toolkit 3.x (Unity 6 VR 템플릿 기본)
 using WizardChess.Core;
-#if UNITY_EDITOR
-using UnityEngine.InputSystem;
-#endif
 
 namespace WizardChess
 {
     /// <summary>
-    /// 프로토타입 보드. 회색 큐브 칸과 단순 도형 기물을 자동 생성하고,
-    /// VR 포인터(또는 에디터 마우스)로 기물을 골라 옮기면 AI가 응수한다.
-    ///
-    /// 사용법: 빈 GameObject에 이 컴포넌트를 붙이고 플레이 위치 앞(예: 0, 0.8, 0.6)에 둔다.
-    /// 백 진영이 -Z 쪽(플레이어 쪽), 흑 진영이 +Z 쪽에 생성된다.
+    /// 3D 보드 화면 표시만 담당한다. 칸·기물 생성, 이동 애니메이션, 선택 하이라이트, 상태 텍스트를 처리한다.
     /// </summary>
-    public class BoardView : MonoBehaviour
+    /// <remarks>
+    /// <para>게임 상태는 바꾸지 않는다. 보드는 GameFlow에서 읽고, 수는 GameFlow 이벤트와
+    /// IMovePresenter.PresentMove로 받는다.</para>
+    /// <para>의존 방향: BoardView는 GameFlow만 안다. 입력(BoardInputAdapter)은 BoardView를 알고,
+    /// 선택 하이라이트는 입력 쪽이 ShowSelection / ClearHighlights를 직접 불러서 그린다.</para>
+    /// <para>사용법: GameFlow, BoardInputAdapter와 같은 GameObject에 붙이고 플레이 위치 앞(예: 0, 0.8, 0.6)에 둔다.
+    /// 백 진영이 -Z 쪽(플레이어 쪽), 흑 진영이 +Z 쪽에 생성된다.</para>
+    /// </remarks>
+    public class BoardView : MonoBehaviour, IMovePresenter
     {
+        [Header("연결 (비워두면 같은 오브젝트에서 찾음)")]
+        [SerializeField] GameFlow gameFlow;
+
         [Header("보드")]
         [Tooltip("칸 한 변의 길이(m). 0.1이면 보드 전체가 80cm")]
         [SerializeField] float squareSize = 0.1f;
@@ -26,6 +30,13 @@ namespace WizardChess
         [SerializeField] Color darkSquareColor = new Color(0.55f, 0.38f, 0.24f);
         [SerializeField] Color selectedColor = new Color(1f, 0.82f, 0.2f);
         [SerializeField] Color moveTargetColor = new Color(0.45f, 0.85f, 0.45f);
+        [Tooltip("칸과 대체 도형 기물에 쓸 머티리얼. 비워두면 Resources/WizardChess/BoardPrimitive를 쓴다.\n" +
+                 "CreatePrimitive의 기본 머티리얼은 빌드에서 셰이더가 빠져 마젠타로 깨지거나 안 보일 수 있다")]
+        [SerializeField] Material primitiveMaterial;
+
+        [Header("플레이어 이동")]
+        [Tooltip("켜면 XR Origin의 CharacterController가 기물에 막히지 않고 통과한다 (탑승 구현 전 자유 이동용)")]
+        [SerializeField] bool rigPassesThroughPieces = true;
 
         [Header("기물 모델 (비워두면 회색 도형 사용)")]
         [Tooltip("백 기물 프리팹 6종")]
@@ -51,44 +62,72 @@ namespace WizardChess
         [Tooltip("기물 이동 애니메이션 시간(초)")]
         [SerializeField] float moveDuration = 0.4f;
 
-        [Header("게임")]
-        [SerializeField] PieceColor playerColor = PieceColor.White;
-        [Tooltip("비워두면 RandomAI를 자동으로 사용")]
-        [SerializeField] ChessAIBase ai;
-        [SerializeField] float aiThinkDelay = 0.3f;
+        [Header("상태 표시")]
         [Tooltip("상태 표시용 텍스트 (선택 사항)")]
         [SerializeField] TMPro.TMP_Text statusText;
 
-        [Header("디버그")]
-        [Tooltip("에디터에서 Game 뷰 마우스 클릭으로도 조작 가능")]
-#pragma warning disable 0414   // 빌드에서는 Update가 빠지므로 미사용 경고가 뜬다
-        [SerializeField] bool mouseInputInEditor = true;
-#pragma warning restore 0414
-        [Tooltip("클릭될 때마다 콘솔에 어느 칸이 눌렸는지 출력")]
-        [SerializeField] bool logClicks = true;
-
-        Board board;
+        CharacterController rigController;   // XR Origin의 이동 충돌체 (없으면 null)
         readonly Renderer[,] squareRenderers = new Renderer[8, 8];
         readonly GameObject[,] pieceObjects = new GameObject[8, 8];
-        readonly List<Move> selectedMoves = new List<Move>();
-        int selectedX = -1, selectedY = -1;
-        bool busy;
-        bool gameOver;
+        // 선택 하이라이트로 색을 바꾼 칸 목록 (원래 색으로 되돌리기 위해 보관)
+        readonly List<Vector2Int> highlighted = new List<Vector2Int>();
 
-        public Board CurrentBoard { get { return board; } }
+        // ───────────────────────── 초기화·구독 ─────────────────────────
 
-        // ───────────────────────── 초기화 ─────────────────────────
+        void Awake()
+        {
+            // 인스펙터에서 비워 두면 같은 오브젝트의 컴포넌트를 쓴다.
+            if (gameFlow == null) gameFlow = GetComponent<GameFlow>();
+            if (gameFlow == null) Debug.LogError("[WizardChess] BoardView: GameFlow를 찾을 수 없습니다.", this);
+        }
+
+        void OnEnable()
+        {
+            if (gameFlow != null)
+            {
+                gameFlow.AddPresenter(this);   // 이동 애니메이션이 끝날 때까지 GameFlow가 기다리게 한다
+                gameFlow.OnTurnStart += HandleTurnStart;
+                gameFlow.OnPromotion += HandlePromotion;
+                gameFlow.OnBoardChanged += RefreshStatus;
+                gameFlow.OnGameOver += HandleGameOver;
+            }
+        }
+
+        void OnDisable()
+        {
+            if (gameFlow != null)
+            {
+                gameFlow.RemovePresenter(this);
+                gameFlow.OnTurnStart -= HandleTurnStart;
+                gameFlow.OnPromotion -= HandlePromotion;
+                gameFlow.OnBoardChanged -= RefreshStatus;
+                gameFlow.OnGameOver -= HandleGameOver;
+            }
+        }
 
         void Start()
         {
-            board = Board.CreateStandard();
-            if (ai == null) ai = gameObject.AddComponent<RandomAI>();
+            if (gameFlow == null) return;
+
+            if (primitiveMaterial == null) primitiveMaterial = Resources.Load<Material>("WizardChess/BoardPrimitive");
+            if (primitiveMaterial == null) Debug.LogWarning("[WizardChess] BoardPrimitive 머티리얼을 찾지 못해 기본 머티리얼을 사용합니다");
+
+            rigController = FindAnyObjectByType<CharacterController>();
+            if (rigPassesThroughPieces) LetPointersHitTriggers();
 
             BuildSquares();
             SpawnAllPieces();
-            RefreshStatus();
 
-            if (board.SideToMove != playerColor) StartCoroutine(RunAITurn());
+            if (rigPassesThroughPieces)
+            {
+                int triggers = 0;
+                foreach (var po in pieceObjects)
+                    if (po != null) foreach (var c in po.GetComponentsInChildren<Collider>(true)) if (c.isTrigger) triggers++;
+                Debug.Log("[WizardChess] 기물 통과 모드: 트리거 콜라이더 " + triggers + "개, CharacterController = "
+                    + (rigController != null ? rigController.name : "없음"));
+            }
+            RefreshStatus();
+            // AI가 먼저 두는 경우의 첫 턴 시작은 GameFlow가 한다.
         }
 
         void BuildSquares()
@@ -103,7 +142,8 @@ namespace WizardChess
                     sq.transform.localScale = new Vector3(squareSize, 0.02f, squareSize);
 
                     var r = sq.GetComponent<Renderer>();
-                    r.material.color = BaseSquareColor(x, y);
+                    ApplyPrimitiveMaterial(r);
+                    r.material.color = BaseSquareColor(x, y);   // 칸마다 머티리얼 인스턴스를 만들어 색만 바꾼다
                     squareRenderers[x, y] = r;
 
                     MakeClickable(sq, x, y);
@@ -114,8 +154,8 @@ namespace WizardChess
         {
             for (int x = 0; x < 8; x++)
                 for (int y = 0; y < 8; y++)
-                    if (!board[x, y].IsEmpty)
-                        pieceObjects[x, y] = CreatePieceObject(board[x, y], x, y);
+                    if (!gameFlow.GetPiece(x, y).IsEmpty)
+                        pieceObjects[x, y] = CreatePieceObject(gameFlow.GetPiece(x, y), x, y);
         }
 
         GameObject CreatePieceObject(Piece piece, int x, int y)
@@ -131,6 +171,7 @@ namespace WizardChess
             go.name = piece.Color + "_" + piece.Type;
             go.transform.localPosition = SquareCenter(x, y) + offset;
             MakeClickable(go, x, y).PlacementOffset = offset;
+            IgnoreRigCollision(go);
             return go;
         }
 
@@ -284,9 +325,41 @@ namespace WizardChess
             go.transform.localScale = shape == PrimitiveType.Cube ? new Vector3(w, h, w) : new Vector3(w, h * 0.5f, w);
             offset = Vector3.up * (h * 0.5f);
 
+            ApplyPrimitiveMaterial(go.GetComponent<Renderer>());
             go.GetComponent<Renderer>().material.color =
                 piece.Color == PieceColor.White ? whitePieceColor : blackPieceColor;
             return go;
+        }
+
+        /// <summary>
+        /// 기물 콜라이더를 트리거로 바꿔 플레이어가 통과하게 한다.
+        /// CharacterController는 트리거와 충돌하지 않으므로 스틱 이동·실제 걷기 모두 막히지 않는다.
+        /// 포인터는 LetPointersHitTriggers에서 트리거도 맞도록 바꿔 두었다.
+        /// </summary>
+        void IgnoreRigCollision(GameObject go)
+        {
+            if (!rigPassesThroughPieces) return;
+            foreach (var c in go.GetComponentsInChildren<Collider>(true))
+            {
+                c.isTrigger = true;
+                if (rigController != null) Physics.IgnoreCollision(rigController, c, true);   // 혹시 모를 경우를 위한 이중 처리
+            }
+        }
+
+        /// <summary>
+        /// 스타터 리그의 Near-Far 포인터는 기본값이 트리거 무시라, 트리거가 된 기물에도 맞도록 바꾼다.
+        /// 텔레포트 레이는 건드리지 않아서 기물을 지나 바닥으로 텔레포트할 수 있다.
+        /// </summary>
+        static void LetPointersHitTriggers()
+        {
+            foreach (var caster in FindObjectsByType<CurveInteractionCaster>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                caster.raycastTriggerInteraction = QueryTriggerInteraction.Collide;
+        }
+
+        /// <summary>빌드에 포함되는 에셋 머티리얼로 바꾼다 (지정된 게 없으면 기본 머티리얼 유지).</summary>
+        void ApplyPrimitiveMaterial(Renderer r)
+        {
+            if (primitiveMaterial != null) r.sharedMaterial = primitiveMaterial;
         }
 
         /// <summary>칸·기물을 VR 포인터와 마우스로 클릭할 수 있게 만든다.</summary>
@@ -297,154 +370,52 @@ namespace WizardChess
 
             // 콜라이더가 이미 있어야 함: XRSimpleInteractable은 추가되는 순간 자식 콜라이더까지 수집한다
             var interactable = go.AddComponent<XRSimpleInteractable>();
-            interactable.selectEntered.AddListener(_ => OnCellClicked(cell.X, cell.Y));
+            cell.BindInteractable(interactable);   // 클릭 처리는 BoardInputAdapter가 맡는다
             return cell;
         }
 
-        // ───────────────────────── 입력 ─────────────────────────
+        // ───────────────────────── 선택 하이라이트 ─────────────────────────
 
-#if UNITY_EDITOR
-        void Update()
+        /// <summary>선택한 칸은 노란색, 갈 수 있는 칸은 초록색으로 칠한다. 이전 하이라이트는 지운다.</summary>
+        /// <remarks>입력 쪽(BoardInputAdapter)이 기물을 선택할 때 부른다.</remarks>
+        public void ShowSelection(int x, int y, IReadOnlyList<Move> moves)
         {
-            if (!mouseInputInEditor) return;
-            var mouse = Mouse.current;
-            if (mouse == null || !mouse.leftButton.wasPressedThisFrame) return;
-            var cam = Camera.main;
-            if (cam == null) return;
-
-            var ray = cam.ScreenPointToRay(mouse.position.ReadValue());
-            RaycastHit hit;
-            if (Physics.Raycast(ray, out hit, 20f))
-            {
-                var cell = hit.collider.GetComponentInParent<BoardCell>();   // 모델은 콜라이더가 자식에 있을 수 있음
-                if (cell != null && cell.Owner == this) OnCellClicked(cell.X, cell.Y);
-            }
+            ClearHighlights();
+            Tint(x, y, selectedColor);
+            foreach (var m in moves) Tint(m.ToX, m.ToY, moveTargetColor);
         }
-#endif
+
+        void Tint(int x, int y, Color color)
+        {
+            squareRenderers[x, y].material.color = color;
+            highlighted.Add(new Vector2Int(x, y));
+        }
+
+        /// <summary>하이라이트한 칸을 원래 색으로 되돌린다.</summary>
+        public void ClearHighlights()
+        {
+            foreach (var p in highlighted)
+                squareRenderers[p.x, p.y].material.color = BaseSquareColor(p.x, p.y);
+            highlighted.Clear();
+        }
+
+        // ───────────────────────── 이동 연출 ─────────────────────────
 
         /// <summary>
-        /// 모든 입력(포인터, 마우스, 나중에 음성·걷기)이 결국 이 함수로 모인다.
-        /// 첫 클릭: 내 기물 선택 / 두 번째 클릭: 이동할 칸 선택.
+        /// 수가 보드에 반영되기 전에 GameFlow가 호출한다. 이 코루틴이 끝날 때까지 GameFlow가 기다린다.
         /// </summary>
-        public void OnCellClicked(int x, int y)
+        /// <remarks>캡처 연출(개발 1)은 별도 IMovePresenter로 붙인다.</remarks>
+        public IEnumerator PresentMove(MoveInfo info)
         {
-            if (logClicks)
-                Debug.Log("[WizardChess] 클릭: " + Board.SquareName(x, y) + " (" + board[x, y] + ")"
-                          + (busy ? "  → 무시됨: 애니메이션/AI 진행 중" : "")
-                          + (gameOver ? "  → 무시됨: 게임 종료" : "")
-                          + (board.SideToMove != playerColor ? "  → 무시됨: 내 차례 아님" : ""));
-
-            if (busy || gameOver || board.SideToMove != playerColor) return;
-
-            if (selectedX >= 0)
-            {
-                Move? chosen = null;
-                foreach (var m in selectedMoves)
-                {
-                    if (m.ToX != x || m.ToY != y) continue;
-                    // 승진은 프로토타입에서는 퀸으로 자동 선택
-                    if (chosen == null || m.Promotion == PieceType.Queen) chosen = m;
-                }
-                if (chosen.HasValue)
-                {
-                    ClearSelection();
-                    StartCoroutine(RunPlayerMove(chosen.Value));
-                    return;
-                }
-            }
-
-            var piece = board[x, y];
-            if (!piece.IsEmpty && piece.Color == playerColor) Select(x, y);
-            else ClearSelection();
-        }
-
-        /// <summary>외부(음성 명령 등)에서 수를 직접 둘 때 사용. 합법수가 아니면 false.</summary>
-        public bool TrySubmitPlayerMove(Move move)
-        {
-            if (busy || gameOver || board.SideToMove != playerColor) return false;
-            foreach (var m in board.GetLegalMoves())
-            {
-                if (m.FromX == move.FromX && m.FromY == move.FromY && m.ToX == move.ToX && m.ToY == move.ToY
-                    && m.Promotion == move.Promotion)
-                {
-                    ClearSelection();
-                    StartCoroutine(RunPlayerMove(m));
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        void Select(int x, int y)
-        {
-            ClearSelection();
-            selectedX = x;
-            selectedY = y;
-            selectedMoves.AddRange(board.GetLegalMovesFrom(x, y));
-
-            squareRenderers[x, y].material.color = selectedColor;
-            foreach (var m in selectedMoves) squareRenderers[m.ToX, m.ToY].material.color = moveTargetColor;
-        }
-
-        void ClearSelection()
-        {
-            if (selectedX >= 0)
-            {
-                squareRenderers[selectedX, selectedY].material.color = BaseSquareColor(selectedX, selectedY);
-                foreach (var m in selectedMoves)
-                    squareRenderers[m.ToX, m.ToY].material.color = BaseSquareColor(m.ToX, m.ToY);
-            }
-            selectedX = selectedY = -1;
-            selectedMoves.Clear();
-        }
-
-        // ───────────────────────── 턴 진행 ─────────────────────────
-
-        IEnumerator RunPlayerMove(Move move)
-        {
-            busy = true;
-            yield return ApplyMoveAnimated(move);
-            if (!CheckGameOver()) yield return RunAITurn();
-            busy = false;
-        }
-
-        IEnumerator RunAITurn()
-        {
-            busy = true;
-            SetStatus("AI가 생각 중...");
-            yield return new WaitForSeconds(aiThinkDelay);
-
-            var task = ai.ChooseMoveAsync(board.Clone());
-            yield return new WaitUntil(() => task.IsCompleted);
-
-            Move? move = task.IsFaulted ? null : task.Result;
-            if (task.IsFaulted) Debug.LogException(task.Exception);
-            if (move == null)
-            {
-                Debug.LogWarning("AI가 수를 고르지 못해 랜덤 수로 대신 둡니다.");
-                move = RandomAI.PickMove(board);
-            }
-
-            if (move.HasValue)
-            {
-                yield return ApplyMoveAnimated(move.Value);
-                CheckGameOver();
-            }
-            busy = false;
-        }
-
-        IEnumerator ApplyMoveAnimated(Move m)
-        {
+            Move m = info.Move;
             var mover = pieceObjects[m.FromX, m.FromY];
-            int capX = m.ToX, capY = m.IsEnPassant ? m.FromY : m.ToY;
-            var captured = pieceObjects[capX, capY];
+            var captured = pieceObjects[info.CaptureX, info.CaptureY];
 
             pieceObjects[m.FromX, m.FromY] = null;
-            pieceObjects[capX, capY] = null;
+            pieceObjects[info.CaptureX, info.CaptureY] = null;
 
             yield return AnimatePiece(mover, m.ToX, m.ToY);
 
-            // TODO: 나중에 "처치 제스처" 연출이 들어갈 자리
             if (captured != null) Destroy(captured);
             pieceObjects[m.ToX, m.ToY] = mover;
 
@@ -457,17 +428,7 @@ namespace WizardChess
                 yield return AnimatePiece(rook, rookTo, rank);
                 pieceObjects[rookTo, rank] = rook;
             }
-
-            board.MakeMove(m);
-
-            if (m.Promotion != PieceType.None)
-            {
-                Destroy(mover);
-                pieceObjects[m.ToX, m.ToY] = CreatePieceObject(board[m.ToX, m.ToY], m.ToX, m.ToY);
-            }
-
-            Debug.Log("수: " + m.ToUci() + "   FEN: " + board.ToFen());
-            RefreshStatus();
+            // 보드 반영, 승진 모델 교체, FEN 로그, 상태 텍스트는 GameFlow 이벤트를 받아 처리한다.
         }
 
         IEnumerator AnimatePiece(GameObject piece, int toX, int toY)
@@ -488,28 +449,38 @@ namespace WizardChess
             cell.SetSquare(toX, toY);
         }
 
-        bool CheckGameOver()
+        // 승진: 이 시점에 보드에는 이미 승진한 기물이 있으므로, 그 기물로 모델을 새로 만든다.
+        void HandlePromotion(Move m)
         {
-            var result = board.GetResult();
-            if (result == GameResult.Ongoing) return false;
+            var old = pieceObjects[m.ToX, m.ToY];
+            if (old != null) Destroy(old);
+            pieceObjects[m.ToX, m.ToY] = CreatePieceObject(gameFlow.GetPiece(m.ToX, m.ToY), m.ToX, m.ToY);
+        }
 
-            gameOver = true;
+        // ───────────────────────── 상태 텍스트 ─────────────────────────
+
+        void HandleTurnStart(PieceColor side)
+        {
+            // 플레이어 차례 표시는 매 수 뒤 RefreshStatus(OnBoardChanged)가 이미 해 준다.
+            if (side != gameFlow.PlayerColor) SetStatus("AI가 생각 중...");
+        }
+
+        void HandleGameOver(GameResult result)
+        {
             switch (result)
             {
                 case GameResult.WhiteWins: SetStatus("체크메이트! 백 승리"); break;
                 case GameResult.BlackWins: SetStatus("체크메이트! 흑 승리"); break;
                 default: SetStatus("무승부"); break;
             }
-            return true;
         }
-
-        // ───────────────────────── 유틸 ─────────────────────────
 
         void RefreshStatus()
         {
-            string side = board.SideToMove == PieceColor.White ? "백" : "흑";
-            string who = board.SideToMove == playerColor ? "당신" : "AI";
-            string check = board.IsInCheck(board.SideToMove) ? "  체크!" : "";
+            PieceColor toMove = gameFlow.SideToMove;
+            string side = toMove == PieceColor.White ? "백" : "흑";
+            string who = toMove == gameFlow.PlayerColor ? "당신" : "AI";
+            string check = gameFlow.IsInCheck(toMove) ? "  체크!" : "";
             SetStatus(side + " 차례 (" + who + ")" + check);
         }
 
@@ -518,6 +489,8 @@ namespace WizardChess
             if (statusText != null) statusText.text = message;
             Debug.Log("[WizardChess] " + message);
         }
+
+        // ───────────────────────── 유틸 ─────────────────────────
 
         Vector3 SquareCenter(int x, int y)
         {

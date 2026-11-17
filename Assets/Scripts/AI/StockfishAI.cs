@@ -14,7 +14,7 @@ namespace WizardChess.AI
     ///  - Quest standalone (Android): Assets/Plugins/Android/libs/arm64-v8a/libstockfish.so
     ///    is packaged as a native lib, extracted at install time, and executed from nativeLibraryDir.
     ///  - Windows editor: Engines/Windows/stockfish.exe (outside Assets so it never ships in the APK).
-    /// Other platforms (e.g. macOS editor) return null, and BoardView falls back to RandomAI.
+    /// Other platforms (e.g. macOS editor) return null, and GameFlow falls back to RandomAI.
     /// </summary>
     public class StockfishAI : ChessAIBase
     {
