@@ -5,7 +5,7 @@ ChessBoard 오브젝트 = `GameFlow` + `BoardView` + `BoardInputAdapter` + `Stoc
 ## 원칙
 - 의존 방향: `BoardInputAdapter` → `BoardView`, `GameFlow` / `BoardView` → `GameFlow` / `GameFlow` → 없음
 - Board는 GameFlow만 바꾼다. 화면 코드는 읽기만 하고, 수는 항상 `GameFlow.TrySubmitPlayerMove`로 둔다.
-- 이벤트 리스너나 연출에서 예외가 나도 로그만 남기고 게임은 계속 진행된다.
+- 이벤트 리스너나 연출(PresentMove) 안에서 예외가 나면 턴 진행이 멈출 수 있다. 예외를 밖으로 던지지 않게 작성한다.
 
 ## 한 수의 이벤트 순서
 `OnMoveDecided(Move)` → `OnCapture(Move, Piece)`(캡처일 때만) → **IMovePresenter.PresentMove 대기** → 보드 반영 → `OnPromotion(Move)`(승진일 때만) → `OnBoardChanged()` → `OnGameOver(GameResult)` 또는 `OnTurnStart(PieceColor)`
@@ -39,6 +39,7 @@ public class CaptureCinematic : MonoBehaviour, IMovePresenter {
   - 3D 보드 하이라이트는 어댑터가 `BoardView.ShowSelection` / `ClearHighlights`를 직접 부른다
   - 이벤트 `OnSelectionChanged(x, y, moves)`, `OnSelectionCleared()` → BoardView가 모르는 다른 화면(지휘 패널 등)용
 - XR 포인터: `BoardCell.Selected`(static) → 어댑터가 `Owner`로 걸러서 처리
+- 에디터 테스트: XR Interaction Simulator 레이로 클릭한다. 마우스 입력(`BoardInputAdapter.mouseInputInEditor`)은 시뮬레이터와 겹쳐 클릭이 두 번 처리되므로 씬에서 꺼 두었다.
 
 ## 아직 안 된 것
 - 프로모션 선택 UI(현재는 퀸 자동, `BoardInputAdapter.TryMoveSelectedTo`의 TODO)

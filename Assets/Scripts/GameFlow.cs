@@ -35,7 +35,7 @@ namespace WizardChess
         // 게임이 끝난 뒤에도 결과를 물어볼 수 있도록 저장해 둔다.
         private GameResult result = GameResult.Ongoing;
 
-        // 수를 보드에 반영하기 전에 끝나기를 기다릴 연출 목록 (5단계에서 사용)
+        // 수를 보드에 반영하기 전에 끝나기를 기다릴 연출 목록 (RunPresenters에서 실행)
         private readonly List<IMovePresenter> presenters = new List<IMovePresenter>();
 
         // ───────────────────────── 이벤트 ─────────────────────────
